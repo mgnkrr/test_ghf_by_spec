@@ -17,10 +17,10 @@
 %    datasets_for_gmin/BMAX_Losing_interp.mat
 %    datasets_for_gmin/specularity.mat               (Q)
 %    datasets_for_gmin/coldex_icethk.mat             (Xgrid, Ygrid, H)
-%    datasets_for_gmin/Ts_interp.mat                            (Ts_interp)
-%    datasets_for_gmin/Mb_interp.mat                            (Mb_interp)
+%    datasets_for_gmin/Ts_interp.mat                 (Ts_interp)
+%    datasets_for_gmin/Mb_interp.mat                 (Mb_interp)
 %    datasets_for_gmin/mouginot_icevel.mat           (icevel)
-%    datasets_for_gmin/sink_mask_new.mat (logical)       var: sink_mask
+%    datasets_for_gmin/sink_mask_new.mat (logical)   var: sink_mask
 %  ================================================================
 function S = bootstrap_ghf_component(cfg_overrides)
 
@@ -34,7 +34,6 @@ cfg = struct( ...
   'target_pos_pct',     10, ...
   'outdir',             'figs_out', ...
   'overwrite',          true, ...
-  'use_parallel',       false, ... %DO NOT USE THIS
   'overlay_alpha',      0.75, ...
   'H_contour_interval', 250, ...
   'y_right',            true, ...
@@ -48,7 +47,7 @@ cfg = struct( ...
 % Flat GHF sweep
 cfg.flat = struct( ...
   'enable',         true, ...
-  'values',         30:1:80, ...
+  'values',         25:1:90, ...
   'interp_enable',  true, ...
   'interp_points',  200, ...
   'interp_method',  'spline' ...
@@ -92,7 +91,6 @@ run = struct('load_data',true,'build_labels',true,'process_ghf',true,'evaluate',
 
 % Plot toggles
 cfg.plots = struct( ...
-  'prrec_cross',           true, ...
   'prrec_expected_adj',    true, ...
   'prrec_expected_raw',    false, ...
   'maps',                  true, ...
@@ -101,8 +99,7 @@ cfg.plots = struct( ...
   'flat_fill_alpha',       0.10 ...
 );
 
-% Two-stat colored-CI figures to render (each cell is {Xstat, Ystat})
-% Supported names here: 'SPEC','REC','PREC','ACC','F1'  (extendable)
+% Two-stat colored-CI figures to render (each cell is {Xstat, Ystat}) --> SPEC','REC','PREC','ACC','F1'
 cfg.two_stat_pairs = { {'SPEC','REC'}};
 
 % Global fallback per-model σ (mW/m^2) used only when no grid is present
@@ -113,21 +110,24 @@ if ~exist(cfg.outdir,'dir'), mkdir(cfg.outdir); end
 if cfg.profile, profile on; end
 
 % Replace BOTH debug-normalization blocks with this single one:
-if ~isfield(cfg,'debug') || (~isstruct(cfg.debug) && ~islogical(cfg.debug)), cfg.debug = false; end
+if ~isfield(cfg,'debug') || (~isstruct(cfg.debug) && ~islogical(cfg.debug))
+    cfg.debug = false;
+end
 if islogical(cfg.debug)
     cfg.debug = struct('enable',logical(cfg.debug), 'level',2, 'sample_k',10, ...
         'save_snapshots',false, 'snapshot_dir',fullfile(cfg.outdir,'debug'), ...
-        'subset_roi',1e6, 'quicklook_plots',true, 'pause_on_fig',true, 'progress_every',25, 'quicklook_all',true,'quicklook_pause',true);
+        'subset_roi',1e6, 'quicklook_plots',true, 'pause_on_fig',false, ...
+        'progress_every',25,'quicklook_all',true,'quicklook_pause',false);
 else
     def = struct('enable',false,'level',1,'sample_k',10,'save_snapshots',false, ...
-        'snapshot_dir',fullfile(cfg.outdir,'debug'),'subset_roi',1e6,'quicklook_plots',false, ...
-        'pause_on_fig',true,'progress_every',25,'quicklook_all',true,'quicklook_pause',false);
-    fn = fieldnames(def);
-    
-    for ii=1:numel(fn), if ~isfield(cfg.debug,fn{ii}), cfg.debug.(fn{ii}) = def.(fn{ii}); end, end
+        'snapshot_dir',fullfile(cfg.outdir,'debug'),'subset_roi',1e6, ...
+        'quicklook_plots',false,'pause_on_fig',false,'progress_every',25, ...
+        'quicklook_all',true,'quicklook_pause',false);
+    fn = fieldnames(def); for ii=1:numel(fn), if ~isfield(cfg.debug,fn{ii}), ...
+                cfg.debug.(fn{ii}) = def.(fn{ii}); end, end
 end
 
-%% -------------------- LOAD --------------------
+%% -------------------- LOAD -------------------- %%
 tLOAD = dbg_tic('LOAD: rasters + ancillary + sinks', cfg);
 
 S = struct();
@@ -141,75 +141,49 @@ if run.load_data
   t=load('datasets_for_gmin/GHF_An_interp.mat','GHF_An_interp');            GHF_An_interp=t.GHF_An_interp;           clear t
   t=load('datasets_for_gmin/GHF_FoxMaule_interp.mat','GHF_FoxMaule_interp');GHF_FoxMaule_interp=t.GHF_FoxMaule_interp;clear t
 
-  % Observations / ancillary
-
-    % Ice thickness + grid
-    t = load('datasets_for_gmin/coldex_icethk.mat','Xgrid','Ygrid','H');
-    S.Xgrid = t.Xgrid; S.Ygrid = t.Ygrid; S.H = t.H; clear t
-    S.X_km = S.Xgrid/1000; S.Y_km = S.Ygrid/1000;
+  % Ice thickness + grid
+  t = load('datasets_for_gmin/coldex_icethk.mat','Xgrid','Ygrid','H');
+  S.Xgrid = t.Xgrid; S.Ygrid = t.Ygrid; S.H = t.H; clear t
+  S.X_km = S.Xgrid/1000; S.Y_km = S.Ygrid/1000;
     
-    % Sinks (use cfg.sinks.path/varname consistently)
-    sv = cfg.sinks.varname;  % e.g., 'sink_mask'
-    ts = load(cfg.sinks.path, sv);
-    assert(isfield(ts, sv), 'Variable "%s" not found in %s', sv, cfg.sinks.path);
-    S.sink_mask = logical(ts.(sv)); clear ts
+  % Sinks (use cfg.sinks.path/varname consistently)
+  sv = cfg.sinks.varname;  % e.g., 'sink_mask'
+  ts = load(cfg.sinks.path, sv);
+  assert(isfield(ts, sv), 'Variable "%s" not found in %s', sv, cfg.sinks.path);
+  S.sink_mask = logical(ts.(sv)); clear ts
     
-    % Optional quicklook: thickness
-    %if isfield(cfg,'debug') && isfield(cfg.debug,'quicklook_all') && cfg.debug.quicklook_all
-    %    quicklook_field('H (thickness)', S.X_km, S.Y_km, S.H, S.sink_mask, cfg);
-    %end
+  % Specularity
+  t = load('datasets_for_gmin/specularity.mat','Q'); 
+  S.Q = t.Q; clear t
+  if cfg.debug.quicklook_all, quicklook_field('Q (specularity)', S.X_km, S.Y_km, S.Q, S.sink_mask, cfg); end
     
-    % Specularity
-    t = load('datasets_for_gmin/specularity.mat','Q'); 
-    S.Q = t.Q; clear t
-    %if isfield(cfg,'debug') && isfield(cfg.debug,'quicklook_all') && cfg.debug.quicklook_all
-    %    quicklook_field('Q (specularity)', S.X_km, S.Y_km, S.Q, S.sink_mask, cfg);
-    %end
-    
-    % Surface temp
-    t = load('datasets_for_gmin/Ts_interp.mat','Ts_interp'); 
-    S.Ts = t.Ts_interp; clear t
-    %if isfield(cfg,'debug') && isfield(cfg.debug,'quicklook_all') && cfg.debug.quicklook_all
-    %    quicklook_field('Ts (surface T)', S.X_km, S.Y_km, S.Ts, [], cfg);
-    %end
-    
-    % (Optional) basic shape/size sanity checks
-    assert(isequal(size(S.H), size(S.Xgrid), size(S.Ygrid)), 'Grid/H size mismatch.');
-    assert(isequal(size(S.sink_mask), size(S.H)), 'sink_mask size must match H.');
+  % Surface temp
+  t = load('datasets_for_gmin/Ts_interp.mat','Ts_interp'); 
+  S.Ts = t.Ts_interp; clear t
+  if cfg.debug.quicklook_all, quicklook_field('Ts (surface T)', S.X_km, S.Y_km, S.Ts, [], cfg); end
 
   t=load('datasets_for_gmin/Mb_interp.mat','Mb_interp');                        S.Mb=t.Mb_interp; clear t
   %S.Mb = S.Mb * 0.6;
-  %if cfg.debug.quicklook_all
-   % quicklook_field('Mb (accumulation)', S.X_km, S.Y_km, S.Mb, [], cfg);
-  %end
+  if cfg.debug.quicklook_all, quicklook_field('Mb (accumulation)', S.X_km, S.Y_km, S.Mb, [], cfg); end
 
   t=load('datasets_for_gmin/mouginot_icevel.mat','icevel');          S.icevel=t.icevel; clear t
-  %if cfg.debug.quicklook_all
-  %  quicklook_field('icevel', S.X_km, S.Y_km, S.icevel, S.sink_mask, cfg);
-  %end
+  if cfg.debug.quicklook_all, quicklook_field('Mb (accumulation)', S.X_km, S.Y_km, S.Mb, [], cfg); end
 
-    % ---- Orientation sanity: ensure X and Y increase, flip ALL rasters coherently ----
-    needFlipY = numel(S.Y_km)>=2 && S.Y_km(2,1) < S.Y_km(1,1);
-    needFlipX = numel(S.X_km)>=2 && S.X_km(1,2) < S.X_km(1,1);
+  % ---- Orientation sanity: ensure X and Y increase, flip ALL rasters coherently ----
+  needFlipY = numel(S.Y_km)>=2 && S.Y_km(2,1) < S.Y_km(1,1);
+  needFlipX = numel(S.X_km)>=2 && S.X_km(1,2) < S.X_km(1,1);    
+  flipY = @(A) flipud(A);
+  flipX = @(A) fliplr(A);
     
-    flipY = @(A) flipud(A);
-    flipX = @(A) fliplr(A);
+  baseList = {'H','Q','Ts','Mb','icevel','sink_mask'};
+  for f = baseList
+    S.(f{1}) = flip_if(S.(f{1}), needFlipY, needFlipX);
+  end
+  if needFlipY, S.Y_km = flipY(S.Y_km); end
+  if needFlipX, S.X_km = flipX(S.X_km); end
     
-    % Base/ancillary fields already in S
-    baseList = {'H','Q','Ts','Mb','icevel','sink_mask'};
-    for f = baseList
-        A = S.(f{1});
-        if needFlipY, A = flipY(A); end
-        if needFlipX, A = flipX(A); end
-        S.(f{1}) = A;
-    end
-    if needFlipY, S.Y_km = flipY(S.Y_km); end
-    if needFlipX, S.X_km = flipX(S.X_km); end
-    
-    % Remember for later-loaded fields
-    S.didFlipY = needFlipY;
-    S.didFlipX = needFlipX;
-
+  S.didFlipY = needFlipY;
+  S.didFlipX = needFlipX;
 
   assert(isequal(size(S.H), size(S.Q), size(S.icevel), size(S.X_km), size(S.Y_km), size(S.sink_mask), size(S.Mb), size(S.Ts)), ...
     'All rasters must have identical sizes.');
@@ -220,16 +194,13 @@ if run.load_data
   S.titles = {'Fox Maule','Hazzard','Martos','Shen','Stål','An','Lösing'};
 
   % Make sure model rasters match grid orientation
-    if isfield(S,'didFlipY') && (S.didFlipY || S.didFlipX)
-        fn = fieldnames(S.models);
-        for k = 1:numel(fn)
-            A = S.models.(fn{k});
-            if S.didFlipY, A = flipud(A); end
-            if S.didFlipX, A = fliplr(A); end
-            S.models.(fn{k}) = A;
-        end
-    end
-
+  if isfield(S,'didFlipY') && (S.didFlipY || S.didFlipX)
+      fn = fieldnames(S.models);
+      for k = 1:numel(fn)
+          S.models.(fn{k}) = flip_if(S.models.(fn{k}), S.didFlipY, S.didFlipX);
+      end
+  end
+ 
   % --- Append flat GHF sweep models ---
   if isfield(cfg,'flat') && cfg.flat.enable
       fv = cfg.flat.values(:)';  % row
@@ -254,66 +225,51 @@ if run.load_data
   if isfile('datasets_for_gmin/BMAX_Losing_interp.mat'),  t=load('datasets_for_gmin/BMAX_Losing_interp.mat','BMAX_Losing_interp'); S.bounds.Losing_max=t.BMAX_Losing_interp; clear t; end
     
   % Align uncertainties/bounds too
-    if isfield(S,'didFlipY') && (S.didFlipY || S.didFlipX)
-        if isfield(S,'unc') && ~isempty(S.unc)
-            fu = fieldnames(S.unc);
-            for k = 1:numel(fu)
-                if ~isempty(S.unc.(fu{k}))
-                    A = S.unc.(fu{k});
-                    if S.didFlipY, A = flipud(A); end
-                    if S.didFlipX, A = fliplr(A); end
-                    S.unc.(fu{k}) = A;
-                end
-            end
-        end
-        if isfield(S,'bounds')
-            if isfield(S.bounds,'Losing_min') && ~isempty(S.bounds.Losing_min)
-                A = S.bounds.Losing_min; if S.didFlipY, A=flipud(A); end; if S.didFlipX, A=fliplr(A); end
-                S.bounds.Losing_min = A;
-            end
-            if isfield(S.bounds,'Losing_max') && ~isempty(S.bounds.Losing_max)
-                A = S.bounds.Losing_max; if S.didFlipY, A=flipud(A); end; if S.didFlipX, A=fliplr(A); end
-                S.bounds.Losing_max = A;
-            end
-        end
-    end
-    
-    % Final monotonicity assert (helps catch sneaky grids)
-    %assert(all(diff(S.X_km(1,:))>0,'omitnan'), 'X grid not strictly increasing after flips');
-    %assert(all(diff(S.Y_km(:,1))>0,'omitnan'), 'Y grid not strictly increasing after flips');
+  if isfield(S,'didFlipY') && (S.didFlipY || S.didFlipX)
+      if isfield(S,'unc') && ~isempty(S.unc)
+          fu = fieldnames(S.unc);
+          for k = 1:numel(fu)
+              if ~isempty(S.unc.(fu{k})), S.unc.(fu{k}) = flip_if(S.unc.(fu{k}), S.didFlipY, S.didFlipX); end
+          end
+      end
+      if isfield(S,'bounds')
+          if isfield(S.bounds,'Losing_min') && ~isempty(S.bounds.Losing_min)
+              S.bounds.Losing_min = flip_if(S.bounds.Losing_min, S.didFlipY, S.didFlipX);
+          end
+          if isfield(S.bounds,'Losing_max') && ~isempty(S.bounds.Losing_max)
+              S.bounds.Losing_max = flip_if(S.bounds.Losing_max, S.didFlipY, S.didFlipX);
+          end
+      end
+  end
 
-  % if cfg.debug.quicklook_all
-  %   % Models
-  %   fn = fieldnames(S.models);
-  %    for k = 1:numel(fn)
-  %        if startsWith(fn{k}, 'Flat_')
-  %            continue;   % skip quicklook for flat models
-  %        end
-  %        quicklook_field(['Model: ' fn{k}], S.X_km, S.Y_km, S.models.(fn{k}), S.sink_mask, cfg);
-  %    end
-  % 
-  %       % Uncertainty grids (if present)
-  %       if isfield(S,'unc') && ~isempty(S.unc)
-  %           fu = fieldnames(S.unc);
-  %           for k = 1:numel(fu)
-  %               if ~isempty(S.unc.(fu{k}))
-  %                   quicklook_field(['σ: ' fu{k}], S.X_km, S.Y_km, S.unc.(fu{k}), S.sink_mask, cfg);
-  %               end
-  %           end
-  %       end
-  % 
-  %       % Losing bounds (if present)
-  %       if isfield(S,'bounds')
-  %           if isfield(S.bounds,'Losing_min') && ~isempty(S.bounds.Losing_min)
-  %               quicklook_field('Losing min', S.X_km, S.Y_km, S.bounds.Losing_min, S.sink_mask, cfg);
-  %           end
-  %           if isfield(S.bounds,'Losing_max') && ~isempty(S.bounds.Losing_max)
-  %               quicklook_field('Losing max', S.X_km, S.Y_km, S.bounds.Losing_max, S.sink_mask, cfg);
-  %           end
-  %       end
-  % end
-  
+  if cfg.debug.quicklook_all
+      % Models
+      fn = fieldnames(S.models);
+      for k = 1:numel(fn)
+          if startsWith(fn{k}, 'Flat_')
+              continue;   % skip quicklook for flat models
+          end
+          quicklook_field(['Model: ' fn{k}], S.X_km, S.Y_km, S.models.(fn{k}), S.sink_mask, cfg);
+      end
+
+      % Uncertainty grids (if present)
+      if isfield(S,'unc') && ~isempty(S.unc)
+          fu = fieldnames(S.unc);
+          for k = 1:numel(fu)
+              if ~isempty(S.unc.(fu{k})), quicklook_field(['σ: ' fu{k}], S.X_km, S.Y_km, S.unc.(fu{k}), S.sink_mask, cfg); end
+          end
+      end
+
+        % Losing bounds (if present)
+        if isfield(S,'bounds')
+            if isfield(S.bounds,'Losing_min') && ~isempty(S.bounds.Losing_min) 
+                quicklook_field('Losing min', S.X_km, S.Y_km, S.bounds.Losing_min, S.sink_mask, cfg); end
+            if isfield(S.bounds,'Losing_max') && ~isempty(S.bounds.Losing_max)
+                quicklook_field('Losing max', S.X_km, S.Y_km, S.bounds.Losing_max, S.sink_mask, cfg); end
+        end
+  end  
 end
+%% -------------------- END LOAD -------------------- %%
 
 % Cast → single (saves memory)
 if cfg.to_single
@@ -322,14 +278,14 @@ if cfg.to_single
   f = fieldnames(S.models); for k = 1:numel(f), S.models.(f{k}) = single(S.models.(f{k})); end
   if isfield(S,'unc'), f=fieldnames(S.unc); for k=1:numel(f), if ~isempty(S.unc.(f{k})), S.unc.(f{k}) = single(S.unc.(f{k})); end, end, end
   if isfield(S,'bounds')
-      if isfield(S.bounds,'Losing_min') && ~isempty(S.bounds.Losing_min), S.bounds.Losing_min = single(S.bounds.Losing_min); end
-      if isfield(S.bounds,'Losing_max') && ~isempty(S.bounds.Losing_max), S.bounds.Losing_max = single(S.bounds.Losing_max); end
+  if isfield(S.bounds,'Losing_min') && ~isempty(S.bounds.Losing_min), S.bounds.Losing_min = single(S.bounds.Losing_min); end
+  if isfield(S.bounds,'Losing_max') && ~isempty(S.bounds.Losing_max), S.bounds.Losing_max = single(S.bounds.Losing_max); end
   end
 end
 
 dbg_toc(tLOAD, 'LOAD: rasters + ancillary + sinks', cfg);
 
-% Raster quick sanity (you already have print_grid_stats helper)
+% Raster quick sanity
 print_grid_stats(cfg, 'H (thickness)', S.H);
 print_grid_stats(cfg, 'Q (specularity)', S.Q);
 print_grid_stats(cfg, 'icevel', S.icevel);
@@ -347,55 +303,12 @@ badV = isfinite(S.icevel(:)) & (S.icevel(:) < 0);
 assert(~any(badV), 'icevel has negative values');
 assert(islogical(S.sink_mask), 'sink_mask must be logical');
 
-%% -------------------- ROI (sinks restrict ROI; with connectivity) ---------
+%% -------------------- ROI MASK (sinks restrict ROI; with connectivity) ---------
 fast_mask  = isfinite(S.icevel) & (S.icevel > cfg.v_keep);
 west_mask  = (S.X_km >= 0) & (S.Y_km <= 350);
 
 % ROI is everything slow+west+valid+in sinks
 S.roi_mask = ~fast_mask & west_mask & isfinite(S.Q) & isfinite(S.H) & S.sink_mask;
-
-% ---------- ROI sanity map ----------
-fig = figure('Color','w','Position',[100 100 950 820]);
-ax  = axes(fig); hold(ax,'on'); axis(ax,'equal'); box(ax,'on'); ax.Layer='top';
-set(ax,'YDir','normal'); xlabel(ax,'X (km)'); ylabel(ax,'Y (km)');
-ylim([-200 350]); xlim([0 800]);
-title(ax, 'ROI mask over H');
-
-% 1) grayscale H background
-Hfinite = S.H(isfinite(S.H));
-Hlo = prctile(double(Hfinite),2); Hhi = prctile(double(Hfinite),98);
-Himg = mat2gray(double(S.H), [Hlo, Hhi]);
-imagesc(ax, S.X_km(1,:), S.Y_km(:,1), Himg); 
-colormap(ax, gray); clim(ax,[0 1]);
-
-% 2) optional H contours
-if isfield(cfg,'H_contour_interval') && ~isempty(cfg.H_contour_interval)
-    try
-        [C,hC] = contour(ax, S.X_km, S.Y_km, S.H, ...
-            'LineColor',[0.45 0.45 0.45], 'LineWidth',0.6);
-        clabel(C,hC,'LabelSpacing',400,'FontSize',8,'Color',[0.35 0.35 0.35]);
-    catch
-    end
-end
-
-% 3) ROI mask overlay (green, semi-transparent)
-RGB = cat(3, 0.10*ones(size(S.roi_mask)), ...  % R
-             0.65*ones(size(S.roi_mask)), ...  % G
-             0.20*ones(size(S.roi_mask)));     % B
-image(ax, S.X_km(1,:), S.Y_km(:,1), RGB, ...
-    'AlphaData', 0.25 * double(S.roi_mask), 'AlphaDataMapping','none');
-
-% crisp outline
-B = bwboundaries(S.roi_mask, 8);
-for b = 1:numel(B)
-    bb = B{b};
-    plot(ax, S.X_km(1,bb(:,2)), S.Y_km(bb(:,1),1), '-', ...
-        'Color',[0.1 0.65 0.2], 'LineWidth',1.2);
-end
-
-try exportgraphics(fig, fullfile(cfg.outdir,'map_roi_mask_over_H.png'), 'Resolution',300); catch
-end
-%dbg_pause(cfg, 'ROI mask map');
 
 idx        = find(S.roi_mask);
 y_raw_vec  = S.Q(idx) >= cfg.spec_thresh;
@@ -410,12 +323,10 @@ dbg(2,cfg,'Connected components (sinks) = %d', CC.NumObjects);
 
 if cfg.debug.enable
     comp_sizes = cellfun(@numel, CC.PixelIdxList);
-
     figure('Name','Component-size histogram','Color','w');
     histogram(comp_sizes, 'BinWidth', 50);
     xlabel('pixels per component'); ylabel('count'); grid on;
     xlim([0 800]); ylim([-200 350]);
-    %dbg_pause(cfg,'component-size histogram');
 end
 
 S.comp_id  = zeros(size(S.roi_mask),'uint32');
@@ -438,6 +349,7 @@ try
         Lcplot = Lc;
         Yplot  = S.Y_km;
     end
+    
     Xplot = S.X_km;
 
     % ---- figure with two overlaid axes (separate colormaps) ----
@@ -476,7 +388,6 @@ try
     try exportgraphics(figC, fullfile(cfg.outdir,'map_components_over_H.png'), 'Resolution',300); catch, end
     if isfield(cfg,'debug') && isstruct(cfg.debug) && cfg.debug.enable && ...
        isfield(cfg.debug,'pause_on_fig') && cfg.debug.pause_on_fig
-        %dbg_pause(cfg,'components map');
     end
 catch
 end
@@ -565,54 +476,33 @@ else
 end
 gmin_vec = Gmin_full(idx);
 
-%if cfg.debug.quicklook_all
-%    quicklook_field('Gmin (baseline)', S.X_km, S.Y_km, Gmin_full, S.roi_mask, cfg);
-%endg
+if cfg.debug.quicklook_all
+    quicklook_field('Gmin (baseline)', S.X_km, S.Y_km, Gmin_full, S.roi_mask, cfg);
+end
 
 % Per-model GΔ (ROI vectors) + cache
- if cfg.use_parallel
-   parfor i = 1:nM
-       fprintf('[Process GΔ] Model %d/%d: %s\n', i, nM, S.names{i});
-       cache_i = fullfile(cfg.cache_dir, sprintf('gdifvec_%s.mat', S.names{i}));
-       if isfile(cache_i)
-           L = load(cache_i, 'gdif_vec'); gdif_cache{i} = L.gdif_vec;
+for i = 1:nM
+   cache_i = fullfile(cfg.cache_dir, sprintf('gdifvec_%s.mat', S.names{i}));
+   if isfile(cache_i)
+       L = load(cache_i, 'gdif_vec'); gdif_cache{i} = L.gdif_vec;
+   else
+       Mi = S.models.(S.names{i});
+       if startsWith(S.names{i}, 'Flat_') || (isscalar(unique(Mi(~isnan(Mi)))))
+           gd = Mi(idx) - gmin_vec;
        else
-           Mi = S.models.(S.names{i});
-           if startsWith(S.names{i}, 'Flat_') || (isscalar(unique(Mi(~isnan(Mi)))))
-               gd = Mi(idx) - gmin_vec;
-           else
-       
+          t1 = dbg_tic(sprintf('processGHF -> GΔ (%s)', S.names{i}), cfg);
+          try
               [~, ~, tmpG] = processGHF(Mi, S.Ts, S.Mb, S.H);
-              gd = tmpG(idx);
-              % (do not keep tmpG around in parfor)
-           end
-           gdif_cache{i} = gd; try gdif_vec = gd; save(cache_i, 'gdif_vec', '-v7.3','-fromstruct'); catch, end
+          catch ME
+              dbg(1,cfg,'ERROR processGHF (%s): %s', S.names{i}, ME.message);
+              disp(getReport(ME,'extended')); rethrow(ME);
+          end
+          dbg_toc(t1, sprintf('processGHF -> GΔ (%s)', S.names{i}), cfg);
+          gd = tmpG(idx);
        end
+       gdif_cache{i} = gd; try gdif_vec = gd; save(cache_i, 'gdif_vec', '-v7.3'); catch, end
    end
- else
-   for i = 1:nM
-       cache_i = fullfile(cfg.cache_dir, sprintf('gdifvec_%s.mat', S.names{i}));
-       if isfile(cache_i)
-           L = load(cache_i, 'gdif_vec'); gdif_cache{i} = L.gdif_vec;
-       else
-           Mi = S.models.(S.names{i});
-           if startsWith(S.names{i}, 'Flat_') || (isscalar(unique(Mi(~isnan(Mi)))))
-               gd = Mi(idx) - gmin_vec;
-           else
-              t1 = dbg_tic(sprintf('processGHF -> GΔ (%s)', S.names{i}), cfg);
-              try
-                  [~, ~, tmpG] = processGHF(Mi, S.Ts, S.Mb, S.H);
-              catch ME
-                  dbg(1,cfg,'ERROR processGHF (%s): %s', S.names{i}, ME.message);
-                  disp(getReport(ME,'extended')); rethrow(ME);
-              end
-              dbg_toc(t1, sprintf('processGHF -> GΔ (%s)', S.names{i}), cfg);
-              gd = tmpG(idx);
-           end
-           gdif_cache{i} = gd; try gdif_vec = gd; save(cache_i, 'gdif_vec', '-v7.3'); catch, end
-       end
-   end
- end
+end
 
 % Build a single evaluation mask (apples-to-apples across models)
 roiN = numel(idx);
@@ -645,28 +535,11 @@ S.eval_mask = valid_all;
 S.eval_mask_full = false(size(S.roi_mask));
 S.eval_mask_full(idx(S.eval_mask)) = true;
 
-% Debug: show eval mask over H (should sit exactly on ROI where valid)
-try
-    fig = figure('Color','w','Position',[100 100 950 820]);
-    ax  = axes(fig); hold(ax,'on'); axis(ax,'equal'); box(ax,'on'); set(ax,'YDir','normal');
-    imagesc(ax, S.X_km(1,:), S.Y_km(:,1), mat2gray(double(S.H))); colormap(ax, gray);
-    title(ax,'Eval mask over H'); xlabel(ax,'X (km)'); ylabel(ax,'Y (km)');
-    % green fill for eval pixels
-    RGB = cat(3, 0.10*ones(size(S.eval_mask_full)), 0.65*ones(size(S.eval_mask_full)), 0.20*ones(size(S.eval_mask_full)));
-    h = image(ax, S.X_km(1,:), S.Y_km(:,1), RGB);
-    set(h,'AlphaData', 0.25 * double(S.eval_mask_full), 'AlphaDataMapping','none');
-    contour(ax, S.X_km, S.Y_km, S.roi_mask, [0.5 0.5], 'k-', 'LineWidth', 0.8); % ROI outline
-    xlim([0 800]); ylim([-200 350]);
-    exportgraphics(fig, fullfile(cfg.outdir,'map_eval_mask_over_H.png'), 'Resolution',300);
-catch
-end
-
 fprintf('Eval pixels: %d ; ROI pixels: %d ; ratio=%.3f\n', ...
     nnz(S.eval_mask), nnz(S.roi_mask), nnz(S.eval_mask)/nnz(S.roi_mask));
 
 dbg(1,cfg,'Eval mask: %d of %d ROI pixels are valid across all models', nnz(S.eval_mask), numel(S.eval_mask));
 dbg_checkpoint('post_eval_mask', struct('eval_mask',S.eval_mask), cfg);
-
 
 % ---- MATH CHECKS: eval mask coherence ----
 M_eval = S.eval_mask;
@@ -676,8 +549,6 @@ assert(numel(M_eval)==numel(gmin_vec), 'eval_mask length mismatch');
 for i=1:nM, assert(numel(gdif_cache{i})==numel(gmin_vec), 'gdif_cache len mismatch'); end
 
 %% === Bootstrap groups (connected sinks) precompute (for 'component' mode) ===
-% comp_id over ROI vector is already created above as: comp_id_vec = S.comp_id(idx);
-
 S.boot_groups = struct('nC',0,'groups',{{}},'uniqC',[]);
 
 if strcmpi(cfg.uncertainty.bootstrap_mode, 'component')
@@ -691,9 +562,9 @@ if strcmpi(cfg.uncertainty.bootstrap_mode, 'component')
         S.boot_groups.nC     = numel(groups);
     end
 
-    %if strcmpi(cfg.uncertainty.bootstrap_mode, 'component')
-    %dbg(1,cfg,'Bootstrap groups: %d components in eval-mask space', S.boot_groups.nC);
-    %end
+    if strcmpi(cfg.uncertainty.bootstrap_mode, 'component')
+        dbg(1,cfg,'Bootstrap groups: %d components in eval-mask space', S.boot_groups.nC);
+    end
 end
 
 %% -------------------- Estimate σ(Gmin) via finite differences -------------
@@ -793,8 +664,8 @@ if isfield(cfg,'uncertainty') && strcmpi(cfg.uncertainty.mode,'analytic')
       CIi_raw.(s{1}) = nan(nM,2);  CIi_adj.(s{1}) = nan(nM,2);
   end
 
-  alpha_main  = 1 - cfg.uncertainty.band_main;   % e.g., 0.10 for 90%
-  alpha_inner = 1 - cfg.uncertainty.band_inner;  % e.g., 0.50 for 50%
+  alpha_main = 1 - cfg.uncertainty.band_main; % e.g., 0.10 for 90% 
+  alpha_inner = 1 - cfg.uncertainty.band_inner; % e.g., 0.50 for 50%
 
   for i = 1:nM
       dbg_progress(i, nM, cfg, cfg.debug.progress_every);
@@ -826,10 +697,8 @@ if isfield(cfg,'uncertainty') && strcmpi(cfg.uncertainty.mode,'analytic')
 
       % Pr[wet] = Pr(GΔ > 0) with combined σ (model ⊕ Gmin)
       pw = wet_prob_from_sigmas(x, sigM, haveG*sigG);
-      pwM = pw(M);  yrM = y_raw(M);  yaM = y_adj(M);
 
         % tighten to finite-only mask for this model
-        % (use the full-length vectors y_raw/y_adj — not yr/ya)
         I = M & isfinite(pw) & isfinite(y_raw) & isfinite(y_adj);
         
         if ~all(I(:) == M(:))
@@ -846,7 +715,7 @@ if isfield(cfg,'uncertainty') && strcmpi(cfg.uncertainty.mode,'analytic')
         pwM = min(max(pwM,0),1);
 
 
-       % ---- MATH CHECKS: probability + expectations ----
+      % ---- MATH CHECKS: probability + expectations ----
       assert_in_range(pw, 0, 1, sprintf('Pr(GΔ>0) pw (%s)', name_i));
       assert_all_finite(pw, 'pw');
       if any(isfinite(pwM))
@@ -858,7 +727,7 @@ if isfield(cfg,'uncertainty') && strcmpi(cfg.uncertainty.mode,'analytic')
           end
       end
 
-      % ---------- Expected (non-bootstrap) confusion and metrics ----------
+      % ----------------------- Expected (non-bootstrap) confusion and metrics ----------
       % RAW expected counts
       ETP  = sum(pwM .* yrM);
       EFP  = sum(pwM .* (1-yrM));
@@ -877,219 +746,175 @@ if isfield(cfg,'uncertainty') && strcmpi(cfg.uncertainty.mode,'analytic')
       EXP_adj.SPEC(i) = mA.SPEC; EXP_adj.REC(i) = mA.REC; EXP_adj.PREC(i)=mA.PREC;
       EXP_adj.ACC(i)  = mA.ACC;  EXP_adj.F1(i)  = mA.F1;
 
-      % Expected-count conservation (RAW/ADJ) — should sum to N
-      %Nexp_raw = ETP + EFP + ETN + EFN;s
-      %Nexp_adj = ETPa + EFPa + ETNa + EFNa;
-      %Nobs     = sum(I);
-      %assert(abs(Nexp_raw - Nobs) < 1e-6*Nobs + 1e-3, '%s: expected RAW counts do not sum to N', name_i);
-      %assert(abs(Nexp_adj - Nobs) < 1e-6*Nobs + 1e-3, '%s: expected ADJ counts do not sum to N', name_i);
+      % skip bootstrapping for flat models
+      if startsWith(name_i,'Flat_')
+          % CI arrays were preinitialized to NaN, so just skip.
+          continue
+      end
 
       % ----------------------- Pixel bootstrap ---------------------------
       N = numel(pwM);
       if N==0
           for s = stat_list
-            CI_raw.(s{1})(i,:)  = [NaN NaN]; CI_adj.(s{1})(i,:)  = [NaN NaN];
-            CIi_raw.(s{1})(i,:) = [NaN NaN]; CIi_adj.(s{1})(i,:) = [NaN NaN];
+              CI_raw.(s{1})(i,:)  = [NaN NaN]; CI_adj.(s{1})(i,:)  = [NaN NaN];
+              CIi_raw.(s{1})(i,:) = [NaN NaN]; CIi_adj.(s{1})(i,:) = [NaN NaN];
           end
       else
-        % ----------------------- Bootstrap (pixel or component) -----------------------
-        alpha_main  = 1 - cfg.uncertainty.band_main;   % e.g., 0.05 for 95%
-        alpha_inner = 1 - cfg.uncertainty.band_inner;  % e.g., 0.50 for 50%
-        B = cfg.uncertainty.n_boot;
+      % ----------------------- Bootstrap (pixel or component) -----------------------
+      B = cfg.uncertainty.n_boot;
+      rng(42);
         
-        N = numel(pwM);
-        if N==0
-            for s = stat_list
-                CI_raw.(s{1})(i,:)  = [NaN NaN]; CI_adj.(s{1})(i,:)  = [NaN NaN];
-                CIi_raw.(s{1})(i,:) = [NaN NaN]; CIi_adj.(s{1})(i,:) = [NaN NaN];
-            end
-        else
-            rng(42);
+      % Allocate one vector per metric per mode (RAW/ADJ)
+      BR = struct(); BA = struct();
+      for s = stat_list, BR.(s{1}) = zeros(B,1); BA.(s{1}) = zeros(B,1); end
+    
+      modeStr = char(cfg.uncertainty.bootstrap_mode);
+    
+      if strcmpi(modeStr, 'pixel')
+          % --- Per-pixel bootstrap (classic) ---
+          for b = 1:B
+              rb = randi(N, N, 1);   % resample pixels with replacement
+              % RAW expected counts
+              ETPb = sum(pwM(rb) .* yrM(rb));
+              EFPb = sum(pwM(rb) .* (1 - yrM(rb)));
+              ETNb = sum((1 - pwM(rb)) .* (1 - yrM(rb)));
+              EFNb = sum((1 - pwM(rb)) .* yrM(rb));
+              mbR  = metrics_from_counts(ETPb,EFPb,ETNb,EFNb);
+              % ADJ expected counts
+              ETPab = sum(pwM(rb) .* yaM(rb));
+              EFPab = sum(pwM(rb) .* (1 - yaM(rb)));
+              ETNab = sum((1 - pwM(rb)) .* (1 - yaM(rb)));
+              EFNab = sum((1 - pwM(rb)) .* yaM(rb));
+              mbA   = metrics_from_counts(ETPab,EFPab,ETNab,EFNab);
+              % collect
+              BR.SPEC(b)=mbR.SPEC; BR.REC(b)=mbR.REC; BR.PREC(b)=mbR.PREC; BR.ACC(b)=mbR.ACC; BR.F1(b)=mbR.F1;
+              BA.SPEC(b)=mbA.SPEC; BA.REC(b)=mbA.REC; BA.PREC(b)=mbA.PREC; BA.ACC(b)=mbA.ACC; BA.F1(b)=mbA.F1;
+          end
+                        
+              if cfg.debug.enable
+                  fprintf('[CI diag, pixel boot] %-10s  Npix=%d  nBoot=%d  mu(pw)=%.3f  sd(pw)=%.3f  frac~{0,1}=%.2f\n', ...
+                          name_i, N, B, mean(pwM,'omitnan'), std(pwM,'omitnan'), ...
+                          mean((pwM<1e-3)|(pwM>1-1e-3),'omitnan'));
+              end        
+          
+      elseif strcmpi(modeStr, 'component')
+          % --- Sink-component bootstrap (resample connected components) ---
+          if ~isfield(S,'boot_groups') || S.boot_groups.nC == 0
+              % Fallback if no groups available
+              for s = stat_list
+                  CI_raw.(s{1})(i,:)  = [NaN NaN]; CI_adj.(s{1})(i,:)  = [NaN NaN];
+                  CIi_raw.(s{1})(i,:) = [NaN NaN]; CIi_adj.(s{1})(i,:) = [NaN NaN];
+              end
+              % Skip quantiles for this model
+              continue
+          end
         
-            % Allocate one vector per metric per mode (RAW/ADJ)
-            BR = struct(); BA = struct();
-            for s = stat_list, BR.(s{1}) = zeros(B,1); BA.(s{1}) = zeros(B,1); end
-        
-            modeStr = char(cfg.uncertainty.bootstrap_mode);
-
-            if strcmpi(modeStr, 'pixel')
-                % --- Per-pixel bootstrap (classic) ---
-                for b = 1:B
-                    rb = randi(N, N, 1);   % resample pixels with replacement
-                    % RAW expected counts
-                    ETPb = sum(pwM(rb) .* yrM(rb));
-                    EFPb = sum(pwM(rb) .* (1 - yrM(rb)));
-                    ETNb = sum((1 - pwM(rb)) .* (1 - yrM(rb)));
-                    EFNb = sum((1 - pwM(rb)) .* yrM(rb));
-                    mbR  = metrics_from_counts(ETPb,EFPb,ETNb,EFNb);
-                    % ADJ expected counts
-                    ETPab = sum(pwM(rb) .* yaM(rb));
-                    EFPab = sum(pwM(rb) .* (1 - yaM(rb)));
-                    ETNab = sum((1 - pwM(rb)) .* (1 - yaM(rb)));
-                    EFNab = sum((1 - pwM(rb)) .* yaM(rb));
-                    mbA   = metrics_from_counts(ETPab,EFPab,ETNab,EFNab);
-                    % collect
-                    BR.SPEC(b)=mbR.SPEC; BR.REC(b)=mbR.REC; BR.PREC(b)=mbR.PREC; BR.ACC(b)=mbR.ACC; BR.F1(b)=mbR.F1;
-                    BA.SPEC(b)=mbA.SPEC; BA.REC(b)=mbA.REC; BA.PREC(b)=mbA.PREC; BA.ACC(b)=mbA.ACC; BA.F1(b)=mbA.F1;
-                end
-
-             % if cfg.debug.enable
-             %    try
-             %        hf = dbg_fig(sprintf('Bootstrap diag — %s', name_i), cfg);
-             %        ax = nexttile;
-             %        scatter(ax, BR.SPEC, BR.REC, 6, '.', 'MarkerEdgeAlpha', 0.3); hold(ax,'on');
-             %        plot(ax, EXP_raw.SPEC(i), EXP_raw.REC(i), 'ro', 'MarkerFaceColor','r');
-             %        xlabel(ax,'SPEC (RAW)'); ylabel(ax,'REC (RAW)'); grid(ax,'on');
-             %    catch
-             %        % diagnostics are best-effort; ignore failures
-             %    end
-             % end
-                
-        
-                if cfg.debug.enable
-                    fprintf('[CI diag, pixel boot] %-10s  Npix=%d  nBoot=%d  mu(pw)=%.3f  sd(pw)=%.3f  frac~{0,1}=%.2f\n', ...
-                            name_i, N, B, mean(pwM,'omitnan'), std(pwM,'omitnan'), ...
-                            mean((pwM<1e-3)|(pwM>1-1e-3),'omitnan'));
-                end
-        
-            elseif strcmpi(modeStr, 'component')
-                % --- Sink-component bootstrap (resample connected components) ---
-                if ~isfield(S,'boot_groups') || S.boot_groups.nC == 0
-                    % Fallback if no groups available
-                    for s = stat_list
-                        CI_raw.(s{1})(i,:)  = [NaN NaN]; CI_adj.(s{1})(i,:)  = [NaN NaN];
-                        CIi_raw.(s{1})(i,:) = [NaN NaN]; CIi_adj.(s{1})(i,:) = [NaN NaN];
-                    end
-                    % Skip quantiles for this model
-                    continue
-                end
-        
-                G  = S.boot_groups.groups;     % cell of index vectors into M-space
-                nC = S.boot_groups.nC;
-        
-                for b = 1:B
-                    rbC = randi(nC, nC, 1);      % sample components with replacement
-                    pick = vertcat(G{rbC});      % concatenate member pixels
-        
-                    % RAW expected counts
-                    ETPb = sum(pwM(pick) .* yrM(pick));
-                    EFPb = sum(pwM(pick) .* (1 - yrM(pick)));
-                    ETNb = sum((1 - pwM(pick)) .* (1 - yrM(pick)));
-                    EFNb = sum((1 - pwM(pick)) .* yrM(pick));
-                    mbR  = metrics_from_counts(ETPb,EFPb,ETNb,EFNb);
-        
-                    % ADJ expected counts
-                    ETPab = sum(pwM(pick) .* yaM(pick));
-                    EFPab = sum(pwM(pick) .* (1 - yaM(pick)));
-                    ETNab = sum((1 - pwM(pick)) .* (1 - yaM(pick)));
-                    EFNab = sum((1 - pwM(pick)) .* yaM(pick));
-                    mbA   = metrics_from_counts(ETPab,EFPab,ETNab,EFNab);
-        
-                    % collect
-                    BR.SPEC(b)=mbR.SPEC; BR.REC(b)=mbR.REC; BR.PREC(b)=mbR.PREC; BR.ACC(b)=mbR.ACC; BR.F1(b)=mbR.F1;
-                    BA.SPEC(b)=mbA.SPEC; BA.REC(b)=mbA.REC; BA.PREC(b)=mbA.PREC; BA.ACC(b)=mbA.ACC; BA.F1(b)=mbA.F1;
-                end
+          G  = S.boot_groups.groups;     % cell of index vectors into M-space
+          nC = S.boot_groups.nC;
+    
+          for b = 1:B
+                rbC = randi(nC, nC, 1);      % sample components with replacement
+                pick = vertcat(G{rbC});      % concatenate member pixels
+    
+                % RAW expected counts
+                ETPb = sum(pwM(pick) .* yrM(pick));
+                EFPb = sum(pwM(pick) .* (1 - yrM(pick)));
+                ETNb = sum((1 - pwM(pick)) .* (1 - yrM(pick)));
+                EFNb = sum((1 - pwM(pick)) .* yrM(pick));
+                mbR  = metrics_from_counts(ETPb,EFPb,ETNb,EFNb);
+    
+                % ADJ expected counts
+                ETPab = sum(pwM(pick) .* yaM(pick));
+                EFPab = sum(pwM(pick) .* (1 - yaM(pick)));
+                ETNab = sum((1 - pwM(pick)) .* (1 - yaM(pick)));
+                EFNab = sum((1 - pwM(pick)) .* yaM(pick));
+                mbA   = metrics_from_counts(ETPab,EFPab,ETNab,EFNab);
+    
+                % collect
+                BR.SPEC(b)=mbR.SPEC; BR.REC(b)=mbR.REC; BR.PREC(b)=mbR.PREC; BR.ACC(b)=mbR.ACC; BR.F1(b)=mbR.F1;
+                BA.SPEC(b)=mbA.SPEC; BA.REC(b)=mbA.REC; BA.PREC(b)=mbA.PREC; BA.ACC(b)=mbA.ACC; BA.F1(b)=mbA.F1;
+           end            
                
-                % if cfg.debug.enable
-                %     hf = dbg_fig(sprintf('Bootstrap diag — %s', name_i), cfg); 
-                %     ax = nexttile;
-                %     tiledlayout(hf,1,1);
-                %     try
-                %         % show joint scatter for RAW SPEC vs REC for boot draws
-                %         scatter(ax, BR.SPEC, BR.REC, 6, '.', 'MarkerEdgeAlpha', 0.3); hold(ax,'on');
-                %         plot(ax, EXP_raw.SPEC(i), EXP_raw.REC(i), 'ro', 'MarkerFaceColor','r');
-                %         xlabel(ax,'SPEC (RAW)'); ylabel(ax,'REC (RAW)'); grid(ax,'on');
-                %     catch
-                %     end
-                % 
-                %     %dbg_pause(cfg, sprintf('bootstrap diag (%s)', name_i));
-                % end
-               
-            if cfg.debug.enable
-                fprintf('[CI diag, comp boot]   %-10s  nComp=%d  nBoot=%d  mu(pw)=%.3f  sd(pw)=%.3f  frac~{0,1}=%.2f\n', ...
-                    name_i, nC, B, mean(pwM,'omitnan'), std(pwM,'omitnan'), ...
-                    mean((pwM<1e-3)|(pwM>1-1e-3),'omitnan'));
-            else
-                error('cfg.uncertainty.bootstrap_mode must be ''pixel'' or ''component''.');
-            end
+           if cfg.debug.enable
+               fprintf('[CI diag, comp boot]   %-10s  nComp=%d  nBoot=%d  mu(pw)=%.3f  sd(pw)=%.3f  frac~{0,1}=%.2f\n', ...
+               name_i, nC, B, mean(pwM,'omitnan'), std(pwM,'omitnan'), ...
+               mean((pwM<1e-3)|(pwM>1-1e-3),'omitnan'));
+           end
+       else
+           error('cfg.uncertainty.bootstrap_mode must be ''pixel'' or ''component''.');
+       end
         
-            % Quantiles → outer/inner CI bands
-            for s = stat_list
-                v = BR.(s{1});
-                CI_raw.(s{1})(i,:)  = quantile(v, [alpha_main/2, 1 - alpha_main/2]);
-                CIi_raw.(s{1})(i,:) = quantile(v, [alpha_inner/2, 1 - alpha_inner/2]);
-                v = BA.(s{1});
-                CI_adj.(s{1})(i,:)  = quantile(v, [alpha_main/2, 1 - alpha_main/2]);
-                CIi_adj.(s{1})(i,:) = quantile(v, [alpha_inner/2, 1 - alpha_inner/2]);
+       % Quantiles → outer/inner CI bands
+       for s = stat_list
+           v = BR.(s{1});
+           CI_raw.(s{1})(i,:)  = quantile(v, [alpha_main/2, 1 - alpha_main/2]);
+           CIi_raw.(s{1})(i,:) = quantile(v, [alpha_inner/2, 1 - alpha_inner/2]);
+           v = BA.(s{1});
+           CI_adj.(s{1})(i,:)  = quantile(v, [alpha_main/2, 1 - alpha_main/2]);
+           CIi_adj.(s{1})(i,:) = quantile(v, [alpha_inner/2, 1 - alpha_inner/2]);
 
-                % ---- MATH CHECKS: CI ordering & nesting ----
-                lohiR  = CI_raw.(s{1})(i,:);  lohiRi = CIi_raw.(s{1})(i,:);
-                lohiA  = CI_adj.(s{1})(i,:);  lohiAi = CIi_adj.(s{1})(i,:);
-                assert(lohiR(1) <= lohiR(2)+1e-12,  '%s RAW outer CI inverted', s{1});
-                assert(lohiRi(1)<= lohiRi(2)+1e-12, '%s RAW inner CI inverted', s{1});
-                assert(lohiA(1) <= lohiA(2)+1e-12,  '%s ADJ outer CI inverted', s{1});
-                assert(lohiAi(1)<= lohiAi(2)+1e-12, '%s ADJ inner CI inverted', s{1});
-                if all(isfinite(lohiR)) && all(isfinite(lohiRi))
-                    if ~(lohiR(1)-1e-6 <= lohiRi(1) && lohiRi(2) <= lohiR(2)+1e-6)
-                        math_warn(cfg,'%s RAW inner CI not within outer CI (ok in rare cases)', s{1});
-                    end
-                end
-                if all(isfinite(lohiA)) && all(isfinite(lohiAi))
-                    if ~(lohiA(1)-1e-6 <= lohiAi(1) && lohiAi(2) <= lohiA(2)+1e-6)
-                        math_warn(cfg,'%s ADJ inner CI not within outer CI (ok in rare cases)', s{1});
-                    end
-                end
-            end
+           % ---- MATH CHECKS: CI ordering & nesting ----
+           lohiR  = CI_raw.(s{1})(i,:);  lohiRi = CIi_raw.(s{1})(i,:);
+           lohiA  = CI_adj.(s{1})(i,:);  lohiAi = CIi_adj.(s{1})(i,:);
+           assert(lohiR(1) <= lohiR(2)+1e-12,  '%s RAW outer CI inverted', s{1});
+           assert(lohiRi(1)<= lohiRi(2)+1e-12, '%s RAW inner CI inverted', s{1});
+           assert(lohiA(1) <= lohiA(2)+1e-12,  '%s ADJ outer CI inverted', s{1});
+           assert(lohiAi(1)<= lohiAi(2)+1e-12, '%s ADJ inner CI inverted', s{1});
+           if all(isfinite(lohiR)) && all(isfinite(lohiRi))
+               if ~(lohiR(1)-1e-6 <= lohiRi(1) && lohiRi(2) <= lohiR(2)+1e-6)
+                   math_warn(cfg,'%s RAW inner CI not within outer CI (ok in rare cases)', s{1});
+               end
+           end
+           if all(isfinite(lohiA)) && all(isfinite(lohiAi))
+               if ~(lohiA(1)-1e-6 <= lohiAi(1) && lohiAi(2) <= lohiA(2)+1e-6)
+                   math_warn(cfg,'%s ADJ inner CI not within outer CI (ok in rare cases)', s{1});
+               end
+           end
         end
-
       end
-    end
   end
-
-  % ---- Stash everything into S for plotting ----
-  S.Gstats = struct();
-
-  % RAW
-  for s = stat_list
-      S.Gstats.([s{1} '_raw']) = struct( ...
-        'EXP', EXP_raw.(s{1}), ...
-        'CI',  CI_raw.(s{1}), ...
-        'CIi', CIi_raw.(s{1}) );
-  end
-  % ADJ
-  for s = stat_list
-      S.Gstats.([s{1} '_adj']) = struct( ...
-        'EXP', EXP_adj.(s{1}), ...
-        'CI',  CI_adj.(s{1}), ...
-        'CIi', CIi_adj.(s{1}) );
-  end
-
-  % quick CSV summary for ADJ (edit as needed)
-  try
-      Tsum = table( string(S.names(:)), string(S.titles(:)), ...
-          S.Gstats.SPEC_adj.EXP(:), S.Gstats.SPEC_adj.CI(:,1), S.Gstats.SPEC_adj.CI(:,2), ...
-          S.Gstats.REC_adj.EXP(:),  S.Gstats.REC_adj.CI(:,1),  S.Gstats.REC_adj.CI(:,2), ...
-          S.Gstats.PREC_adj.EXP(:), S.Gstats.PREC_adj.CI(:,1), S.Gstats.PREC_adj.CI(:,2), ...
-          S.Gstats.ACC_adj.EXP(:),  S.Gstats.ACC_adj.CI(:,1),  S.Gstats.ACC_adj.CI(:,2), ...
-          S.Gstats.F1_adj.EXP(:),   S.Gstats.F1_adj.CI(:,1),   S.Gstats.F1_adj.CI(:,2), ...
-          'VariableNames', {'Name','Title', ...
-            'SPEC','SPEC_lo','SPEC_hi','REC','REC_lo','REC_hi', ...
-            'PREC','PREC_lo','PREC_hi','ACC','ACC_lo','ACC_hi','F1','F1_lo','F1_hi'});
-      if ~exist(cfg.outdir,'dir'), mkdir(cfg.outdir); end
-      csv_path = fullfile(cfg.outdir,'ci_summary_adj.csv');
-      writetable(Tsum, csv_path);
-      fprintf('Saved CI summary CSV (ADJ): %s\n', csv_path);
-  catch ME
-      warning(ME.identifier,'Could not write ci_summary_adj.csv: %s', ME.message);
-  end
-
-  dbg_checkpoint('post_bootstrap', struct('Gstats',S.Gstats), cfg);
 end
 
-%% -------------------- COLORED-CI PLOTS (single & generalized) ------------
-% We'll render whatever pairs you list in cfg.two_stat_pairs (ADJ), and also
-% save SPEC–REC (ADJ) with your original filename for continuity.
+% ---- Stash everything into S for plotting ----
+S.Gstats = struct();
 
+% RAW
+for s = stat_list
+ S.Gstats.([s{1} '_raw']) = struct( ...
+   'EXP', EXP_raw.(s{1}), ...
+   'CI',  CI_raw.(s{1}), ...
+   'CIi', CIi_raw.(s{1}) );
+end
+% ADJ
+for s = stat_list
+ S.Gstats.([s{1} '_adj']) = struct( ...
+   'EXP', EXP_adj.(s{1}), ...
+   'CI',  CI_adj.(s{1}), ...
+   'CIi', CIi_adj.(s{1}) );
+end
+
+% quick CSV summary for ADJ (edit as needed)
+try
+ Tsum = table( string(S.names(:)), string(S.titles(:)), ...
+     S.Gstats.SPEC_adj.EXP(:), S.Gstats.SPEC_adj.CI(:,1), S.Gstats.SPEC_adj.CI(:,2), ...
+     S.Gstats.REC_adj.EXP(:),  S.Gstats.REC_adj.CI(:,1),  S.Gstats.REC_adj.CI(:,2), ...
+     S.Gstats.PREC_adj.EXP(:), S.Gstats.PREC_adj.CI(:,1), S.Gstats.PREC_adj.CI(:,2), ...
+     S.Gstats.ACC_adj.EXP(:),  S.Gstats.ACC_adj.CI(:,1),  S.Gstats.ACC_adj.CI(:,2), ...
+     S.Gstats.F1_adj.EXP(:),   S.Gstats.F1_adj.CI(:,1),   S.Gstats.F1_adj.CI(:,2), ...
+     'VariableNames', {'Name','Title', ...
+       'SPEC','SPEC_lo','SPEC_hi','REC','REC_lo','REC_hi', ...
+       'PREC','PREC_lo','PREC_hi','ACC','ACC_lo','ACC_hi','F1','F1_lo','F1_hi'});
+ if ~exist(cfg.outdir,'dir'), mkdir(cfg.outdir); end
+ csv_path = fullfile(cfg.outdir,'ci_summary_adj.csv');
+ writetable(Tsum, csv_path);
+ fprintf('Saved CI summary CSV (ADJ): %s\n', csv_path);
+catch ME
+ warning(ME.identifier,'Could not write ci_summary_adj.csv: %s', ME.message);
+end
+
+dbg_checkpoint('post_bootstrap', struct('Gstats',S.Gstats), cfg);
+
+%% -------------------- COLORED-CI PLOTS (single & generalized) ------------
 if isfield(cfg,'two_stat_pairs') && ~isempty(cfg.two_stat_pairs)
     % ---- MATH CHECKS: plotting prerequisites ----
     assert(isfield(S,'Gstats'), 'Gstats missing — run uncertainty/bootstraps first');
@@ -1128,7 +953,6 @@ if isfield(cfg,'two_stat_pairs') && ~isempty(cfg.two_stat_pairs)
             plot_colored_ci_pair(S, cfg, pair{1}, pair{2}, 'adj');
             out = fullfile(cfg.outdir, sprintf('ci2_%s_%s_ADJ.png', upper(pair{1}), upper(pair{2})));
             exportgraphics(gcf, out, 'Resolution', 300);
-            %if k==1, dbg_pause(cfg, 'colored-ci pair (ADJ)'); end
             if cfg.close_figs, close(gcf); end
 
             % If this pair is SPEC–REC, also save the legacy filename:
@@ -1141,7 +965,7 @@ if isfield(cfg,'two_stat_pairs') && ~isempty(cfg.two_stat_pairs)
     end
 end
 
-% (Optional RAW plots for the same pairs)
+% RAW plots for the same pairs
 if isfield(cfg.plots,'prrec_expected_raw') && cfg.plots.prrec_expected_raw ...
         && isfield(cfg,'two_stat_pairs') && ~isempty(cfg.two_stat_pairs)
     for k = 1:numel(cfg.two_stat_pairs)
@@ -1150,7 +974,6 @@ if isfield(cfg.plots,'prrec_expected_raw') && cfg.plots.prrec_expected_raw ...
             plot_colored_ci_pair(S, cfg, pair{1}, pair{2}, 'raw');
             out = fullfile(cfg.outdir, sprintf('ci2_%s_%s_RAW.png', upper(pair{1}), upper(pair{2})));
             exportgraphics(gcf, out, 'Resolution', 300);
-            %if k==1, dbg_pause(cfg, 'prrec_expected_raw'); end
             if cfg.close_figs, close(gcf); end
         catch ME
             warning('2D plot %s-%s RAW failed: %s', pair{1}, pair{2}, ME.message);
@@ -1208,7 +1031,7 @@ if isfield(cfg,'debug') && isstruct(cfg.debug) && cfg.debug.enable
     end
 end
 
-%% -------------------- MAPS (optional) -------------------------------------
+%% -------------------- MAPS -------------------------------------
 if cfg.plots.maps
   fprintf('Rendering maps (GΔ masked by slow flow; sinks overlaid as points)...\n');
   tMAP = dbg_tic('Render maps', cfg);
@@ -1302,13 +1125,18 @@ if cfg.plots.maps
   dbg_toc(tMAP, 'Render maps', cfg);
   dbg_checkpoint('post_maps', struct('L',L), cfg);
 end
-
+% ===================== END MAPS =====================
 if cfg.profile, profile viewer; profile off; end
 end
 % ===================== end main =====================
 
-
 %% ===================== Helpers =====================
+function A = flip_if(A, doY, doX)
+% flip array A in Y and/or X if flags are true
+    if doY, A = flipud(A); end
+    if doX, A = fliplr(A); end
+end
+
 function dbg(level, cfg, fmt, varargin)
   if isfield(cfg,'debug') && cfg.debug.enable && cfg.debug.level>=level
       fprintf([fmt '\n'], varargin{:});
@@ -1332,54 +1160,100 @@ function print_grid_stats(cfg, name, A)
   end
 end
 
-function v = quant(x,pcts)
-  x = double(x(isfinite(x))); if isempty(x), v = nan(1,numel(pcts)); return; end
-  v = prctile(x, pcts);
+function ok = save_png(fig, path, cfg)
+% Robust PNG saver:
+% - absolute path
+% - settle graphics queue
+% - try exportgraphics
+% - if it fails (e.g., invalid/deleted rulers), clone to a headless fig and retry
+% - final fallback to print
+
+    if nargin<3 || isempty(cfg), cfg = struct('overwrite',true,'close_figs',false); end
+    if ~ishandle(fig) || ~isvalid(fig)
+        warning('save_png:badFig','Invalid figure handle'); ok=false; return;
+    end
+
+    % Ensure directory exists; force absolute path
+    [pdir, pname, pext] = fileparts(path);
+    if isempty(pext), pext = '.png'; end
+    if ~exist(pdir,'dir'), mkdir(pdir); end
+    apath = fullfile(char(java.io.File(pdir).getCanonicalPath), [pname pext]);
+
+    if isfield(cfg,'overwrite') && ~cfg.overwrite && isfile(apath)
+        fprintf('save_png: not overwriting existing %s\n', apath);
+        ok = true;
+        if isfield(cfg,'close_figs') && cfg.close_figs && isvalid(fig), close(fig); end
+        return;
+    end
+
+    % Let any pending layout/colormap/CB updates finish
+    drawnow expose;
+    pause(0.01);
+
+    ok = try_export(fig, apath);
+
+    % If exportgraphics failed (often due to ruler/listener cleanup), retry on a clone
+    if ~ok
+        try
+            fclone = clone_figure_for_export(fig);
+            drawnow expose;
+            pause(0.01);
+            ok = try_export(fclone, apath);
+            if isvalid(fclone), close(fclone); end
+        catch MEc
+            warning('save_png:cloneExport','Clone-export path failed: %s', MEc.message);
+        end
+    end
+
+    % Final fallback: print
+    if ~ok
+        try
+            if isvalid(fig), set(fig,'PaperPositionMode','auto'); end
+            print(fig, apath, '-dpng','-r300');
+            ok = true;
+        catch ME2
+            warning('save_png:print','print fallback failed: %s', ME2.message);
+        end
+    end
+
+    if ok
+        fprintf('Saved PNG → %s\n', apath);
+    else
+        warning('save_png:failed','Could not save PNG to %s', apath);
+    end
+
+    if isfield(cfg,'close_figs') && cfg.close_figs && isvalid(fig), close(fig); end
 end
 
-function ok = save_png(fig, path, cfg)
-% Robust PNG saver: absolute path, drawnow, exportgraphics with print fallback
+% ---- helpers for robust export ----
+function ok = try_export(h, apath)
+    ok = false;
+    if ~ishandle(h) || ~isvalid(h), return; end
+    try
+        exportgraphics(h, apath, 'Resolution', 300);
+        ok = true;
+    catch ME
+        warning('save_png:exportgraphics','exportgraphics failed: %s', ME.message);
+    end
+end
 
-  if nargin<3 || isempty(cfg), cfg = struct('overwrite',true,'close_figs',false); end
-  if ~isgraphics(fig), warning('save_png:badFig','Invalid figure handle'); ok=false; return; end
-
-  % Ensure directory exists; force absolute path
-  [pdir, pname, pext] = fileparts(path);
-  if isempty(pext), pext = '.png'; end
-  if ~exist(pdir,'dir'), mkdir(pdir); end
-  apath = fullfile(char(java.io.File(pdir).getCanonicalPath), [pname pext]);
-
-  if ~cfg.overwrite && isfile(apath)
-      fprintf('save_png: not overwriting existing %s\n', apath);
-      ok = true; 
-      if isfield(cfg,'close_figs') && cfg.close_figs, close(fig); end
-      return;
-  end
-
-  drawnow;  % ensure it's rendered
-
-  ok = false;
-  try
-      exportgraphics(fig, apath, 'Resolution', 300);
-      ok = true;
-  catch ME
-      warning('save_png:exportgraphics','exportgraphics failed (%s). Falling back to print.', ME.message);
-      try
-          set(fig,'PaperPositionMode','auto');
-          print(fig, apath, '-dpng','-r300');
-          ok = true;
-      catch ME2
-          warning('save_png:print','print fallback failed: %s', ME2.message);
-      end
-  end
-
-  if ok
-      fprintf('Saved PNG → %s\n', apath);
-  else
-      warning('save_png:failed','Could not save PNG to %s', apath);
-  end
-
-  if isfield(cfg,'close_figs') && cfg.close_figs, close(fig); end
+function f2 = clone_figure_for_export(f1)
+% Create a headless clone of a figure to decouple export from live listeners/linkprops
+    if ~ishandle(f1) || ~isvalid(f1)
+        error('clone_figure_for_export:invalid','Source figure invalid.');
+    end
+    % Build new invisible figure roughly matching size/background
+    pos = get(f1,'Position');
+    try bg = get(f1,'Color'); catch, bg = [1 1 1]; end
+    f2  = figure('Visible','off','Color',bg,'Position',pos,'InvertHardCopy','off');
+    % Copy ALL children (axes, colorbars, legends, etc.) preserving stacking order
+    kids = allchild(f1);
+    copyobj(kids, f2);
+    % Try to preserve axis limits & colormaps on topmost axes
+    axs = findall(f2,'Type','axes');
+    for k = 1:numel(axs)
+        try axis(axs(k),'image'); catch, end
+    end
 end
 
 function m = compute_metrics(pred, truth)
@@ -1402,7 +1276,6 @@ end
 
 function [xExt, yExt] = grid_extents(X, Y)
 % Return [xmin xmax] and [ymin ymax] at pixel edges (robust to NaNs, order)
-
   % X spacing
   x = X(1,:); x = x(isfinite(x));
   if numel(x) >= 2
@@ -1482,8 +1355,6 @@ function h = md5_of_logical(L)
     h    = lower(reshape(dec2hex(raw,2).',1,[]));
 end
 
-% ---- Uncertainty helpers ----
-
 % Pr[(M - Gmin) > 0] when (M - Gmin) ~ N(mu, sig_m^2 + sig_g^2)
 function pwet = wet_prob_from_sigmas(gdif_vec, sig_m, sig_g)
   if isempty(sig_g), sig_g = 0; end
@@ -1543,19 +1414,6 @@ function [sigma_map, sigma_scalar] = estimate_sigma_gmin_fd(S, cfg)
   end
   sigma_scalar = sqrt(mean(double(vv).^2, 'omitnan'));
 
-  % ---- MATH CHECK (optional): central-diff step stability on a subset ----
-    % if cfg.debug.enable
-    %     try
-    %         hf = dbg_fig(sprintf('Bootstrap diag — %s', name_i), cfg);
-    %         ax = nexttile;
-    %         scatter(ax, BR.SPEC, BR.REC, 6, '.', 'MarkerEdgeAlpha', 0.3); hold(ax,'on');
-    %         plot(ax, EXP_raw.SPEC(i), EXP_raw.REC(i), 'ro', 'MarkerFaceColor','r');
-    %         xlabel(ax,'SPEC (RAW)'); ylabel(ax,'REC (RAW)'); grid(ax,'on');
-    %     catch
-    %         % diagnostics are best-effort; ignore failures
-    %     end
-    % end
-
   try save(cache_path, 'sigma_map','sigma_scalar','-v7.3'); catch
   end
 end
@@ -1568,12 +1426,6 @@ function val = get_field_default(s, fld, defaultVal)
     end
 end
 
-%% ---------- MATH CHECK PACK (helpers) ----------
-function tf = approx_equal(a,b,tol)
-    if nargin<3, tol = 1e-6; end
-    tf = all(abs(a(:)-b(:)) <= tol | (isnan(a(:)) & isnan(b(:))));
-end
-
 function assert_in_range(x, lo, hi, name)
     bad = ~isnan(x) & (x<lo | x>hi);
     assert(~any(bad(:)), '%s out of range [%g,%g] (violations=%d)', name, lo, hi, nnz(bad));
@@ -1581,55 +1433,6 @@ end
 
 function assert_all_finite(x, name)
     assert(all(isfinite(x(:)) | isnan(x(:))), '%s contains +/-Inf (not allowed)', name);
-end
-
-function s = sample_idx(M, k, opts)
-% SAMPLE_IDX  Sample k indices where mask M is true, with local RNG control.
-%   s = sample_idx(M, k)                         % fixed seed=42, no replacement
-%   s = sample_idx(M, k, struct('seed',123))     % deterministic seed=123
-%   s = sample_idx(M, k, struct('shuffle',true)) % different each call
-%   s = sample_idx(M, k, struct('stream',rs))    % use provided RandStream
-%   s = sample_idx(M, k, struct('replace',true)) % sample with replacement
-%
-% opts fields (all optional):
-%   - seed      : numeric seed (default 42)    [ignored if stream given]
-%   - shuffle   : logical (default false)      [ignored if stream given]
-%   - stream    : RandStream to use (default [])
-%   - replace   : logical sample-with-replacement (default false)
-
-    if nargin < 3 || isempty(opts), opts = struct(); end
-    if ~isfield(opts,'seed'),    opts.seed    = 42;    end
-    if ~isfield(opts,'shuffle'), opts.shuffle = false; end
-    if ~isfield(opts,'stream'),  opts.stream  = [];    end
-    if ~isfield(opts,'replace'), opts.replace = false; end
-
-    idx = find(M(:));
-    if isempty(idx) || k <= 0
-        s = []; 
-        return;
-    end
-
-    k = min(k, numel(idx));
-
-    % Local stream selection (no global rng side effects)
-    if ~isempty(opts.stream)
-        rs = opts.stream;
-    elseif opts.shuffle
-        rs = RandStream('Threefry','Seed','shuffle');
-    elseif ~isempty(opts.seed)
-        rs = RandStream('Threefry','Seed',opts.seed);
-    else
-        % fall back to current global stream if nothing specified
-        rs = RandStream.getGlobalStream();
-    end
-
-    if opts.replace
-        pick = randi(rs, numel(idx), k, 1);   % with replacement
-        s = idx(pick);
-    else
-        perm = randperm(rs, numel(idx), k);   % without replacement
-        s = idx(perm);
-    end
 end
 
 function math_warn(cfg, msg, varargin)
@@ -1644,26 +1447,6 @@ function ok = check_confusion_identities(m)
     ok = ok & all(v >= -1e-9 & v <= 1+1e-9);
 end
 
-function print_vec_stat(lbl, v)
-    v = v(:);
-    fprintf('%-18s min/med/mean/max = %.4f / %.4f / %.4f / %.4f (n=%d, nan=%d)\n', ...
-        [lbl ' '], min(v,[],'omitnan'), median(v,'omitnan'), mean(v,'omitnan'), max(v,[],'omitnan'), ...
-        sum(isfinite(v)), sum(~isfinite(v)));
-end
-
-function g = gini_fast(v)
-    v = double(v(:));
-    v = v(isfinite(v) & v>=0);
-    n = numel(v);
-    if n==0, g = 0; return; end
-    S = sum(v);
-    if S==0, g = 0; return; end
-    v = sort(v);
-    idx = (1:n)';
-    g = (2*sum(idx .* v) / (n*S)) - (n+1)/n;
-    g = max(0, min(1, g));
-end
-
 function fig = plot_overlay_on_H(X_km, Y_km, H, Z, climZ, mode, cfg, mask_slow, varargin)
 % plot_overlay_on_H - H as grayscale background, Z overlaid with alpha
 % Inputs are unchanged from your version.
@@ -1673,7 +1456,6 @@ function fig = plot_overlay_on_H(X_km, Y_km, H, Z, climZ, mode, cfg, mask_slow, 
     addParameter(p,'SinkStyle',struct(),@isstruct);
     parse(p,varargin{:});
     sinkMask  = p.Results.SinkMask;
-    sinkStyle = p.Results.SinkStyle;
 
     % --- extents so all rasters share the same placement ---
     [xExt, yExt] = grid_extents(X_km, Y_km);
@@ -1686,7 +1468,7 @@ function fig = plot_overlay_on_H(X_km, Y_km, H, Z, climZ, mode, cfg, mask_slow, 
     end
 
     % --- figure + two overlaid axes (separate colormaps) ---
-    fig = figure('Color','w','Position',[100 100 900 800]);
+    fig = figure('Visible', 'off', 'Color','w','Position',[100 100 900 800]);
 
     % Bottom axis: H grayscale background
     axH = axes('Parent',fig); hold(axH,'on'); axis(axH,'image'); box(axH,'on');
@@ -1715,7 +1497,7 @@ function fig = plot_overlay_on_H(X_km, Y_km, H, Z, climZ, mode, cfg, mask_slow, 
         set(him,'AlphaData', cfg.overlay_alpha);
     end
     colormap(axZ, cmapZ);
-    caxis(axZ, climZ);
+    clim(axZ, climZ);
     cb = colorbar(axZ); ylabel(cb,'mW m^{-2}');
 
     % --- keep only ONE set of ticks/labels/box (top axis) ---
@@ -1755,13 +1537,12 @@ function fig = plot_overlay_on_H(X_km, Y_km, H, Z, climZ, mode, cfg, mask_slow, 
                      0.20*ones(size(sinkMask)));
         hmask = imagesc(axZ, X_km(1,:), Y_km(:,1), RGB);  % <— imagesc + grid vectors
         set(hmask, 'AlphaData', 0.40 * double(sinkMask), ...   % a bit stronger
-                   'AlphaDataMapping','none', ...plot_overlay_on_H
+                   'AlphaDataMapping','none', ...
                    'HitTest','off', 'PickableParts','none');
     
-        % make absolutely sure it's on top of Z and contours
-        uistack(hmask, 'top');  % requires R2018b+; harmless if older
+        uistack(hmask, 'top'); 
     
-        % crisp outlines (plotted AFTER the mask, so they're visible)
+        % crisp outlines 
         B = bwboundaries(sinkMask, 8);
         for b = 1:numel(B)
             bb = B{b};
@@ -1770,7 +1551,6 @@ function fig = plot_overlay_on_H(X_km, Y_km, H, Z, climZ, mode, cfg, mask_slow, 
                  'HitTest','off');
         end
     else
-        % optional: quick sanity to catch empty/degenerate masks
         fprintf('SinkMask empty or all-false; nothing to draw.\n');
     end
 
@@ -1824,7 +1604,45 @@ function plot_colored_ci_pair(S, cfg, statX, statY, mode)
     xlim(ax, stat_axis_limits(statX));
     ylim(ax, stat_axis_limits(statY));
 
-    % Non-flat models: colored CI envelopes + markers + labels
+    % ---- Flat GHF sweep (gradient by flat value in mW m^-2) ----
+    If = find(is_flat);
+    xs = X(If); ys = Y(If); vals = S.model_cvals(If);  % flat GHF values
+    good = isfinite(xs) & isfinite(ys) & isfinite(vals);
+    xs = xs(good); ys = ys(good); vals = vals(good);
+
+    if numel(vals) >= 2
+        % sort by flat value so the gradient is monotonic
+        [vals_s, ord] = sort(vals);
+        xs_s = xs(ord); ys_s = ys(ord);
+
+        if isfield(cfg.flat,'interp_enable') && cfg.flat.interp_enable && numel(vals_s) >= 2
+            % interpolate the curve parameterized by "flat value"
+            npts = max(20, cfg.flat.interp_points);
+            [u, iu] = unique(vals_s);                  % ensure strictly increasing param
+            vi = linspace(min(u), max(u), npts);       % parameter = flat value (mW m^-2)
+            mth = 'spline';
+            if isfield(cfg.flat,'interp_method') && ~isempty(cfg.flat.interp_method)
+                mth = cfg.flat.interp_method;
+            end
+            xi = interp1(u, xs_s(iu), vi, mth, 'extrap');
+            yi = interp1(u, ys_s(iu), vi, mth, 'extrap');
+
+            % gradient line using your helper (colored by flat value)
+            plot_gradient_curve(ax, xi, yi, vi, 15);
+        else
+            % no interpolation; color per-vertex by its flat value
+            plot_gradient_curve(ax, xs_s, ys_s, vals_s, 15);
+        end
+
+        % set colormap & color scale for the gradient (others use explicit RGB)
+        colormap(ax, diverging_cmap(256));
+        clim(ax, [min(vals) max(vals)]);
+        grid off;
+        cb = colorbar(ax);
+        ylabel(cb, 'Flat GHF (mW m^{-2})');
+    end
+
+        % Non-flat models: colored CI envelopes + markers + labels
     for i = 1:nM
         if is_flat(i), continue; end
         if ~all(isfinite([X(i) Y(i)])), continue; end
@@ -1855,37 +1673,6 @@ function plot_colored_ci_pair(S, cfg, statX, statY, mode)
         end
     end
 
-    % ---- Flat GHF sweep (sorted by actual flat value) ----
-    If = find(is_flat);
-    xs = X(If); ys = Y(If);
-    good = isfinite(xs) & isfinite(ys) & isfinite(S.model_cvals(If));
-    If = If(good); xs = xs(good); ys = ys(good);
-    if numel(If) >= 2
-        [~, ord] = sort(S.model_cvals(If));
-        xs = xs(ord); ys = ys(ord);
-
-        if isfield(cfg.flat,'interp_enable') && cfg.flat.interp_enable && numel(xs) >= 2
-            npts = max(20, cfg.flat.interp_points);
-            [ux, iu] = unique(xs);
-            xi = linspace(min(ux), max(ux), npts);
-            mth = 'spline';
-            if isfield(cfg.flat,'interp_method') && ~isempty(cfg.flat.interp_method)
-                mth = cfg.flat.interp_method;
-            end
-            yi = interp1(ux, ys(iu), xi, mth, 'extrap');
-            plot(ax, xi, yi, '-', 'Color',[0.4 0.4 0.4], 'LineWidth',1.5, ...
-                 'Clipping','on', 'DisplayName','Flat GHF sweep');
-        else
-            plot(ax, xs, ys, '-', 'Color',[0.4 0.4 0.4], 'LineWidth',1.5, ...
-                 'Clipping','on', 'DisplayName','Flat GHF sweep');
-        end
-
-        % small dots along sweep
-        plot(ax, xs, ys, 'o', 'MarkerFaceColor','w', ...
-             'MarkerEdgeColor',[0.4 0.4 0.4], 'MarkerSize',5, 'LineWidth',1, ...
-             'HandleVisibility','off', 'Clipping','on');
-    end
-
     title(ax, sprintf('%s – %s (%s): colored CIs (models) + flat sweep', ...
         statX, statY, upper(mode)));
 end
@@ -1903,11 +1690,6 @@ function dbg_progress(i, n, cfg, every)
         dbg(2,cfg,'Progress: %d/%d (%.1f%%)', i, n, 100*i/n);
         drawnow;
     end
-end
-
-function h = dbg_fig(titleStr, cfg)
-    h = figure('Name',titleStr,'NumberTitle','off','Color','w');
-    tiledlayout(h,1,1);
 end
 
 function dbg_pause(cfg, why)
@@ -1938,19 +1720,6 @@ function dbg_checkpoint(label, varsStruct, cfg)
     end
 end
 
-function safe_try(label, cfg, fcn)
-    t = dbg_tic(label, cfg);
-    try
-        fcn();
-        dbg_toc(t, label, cfg);
-    catch ME
-        dbg_toc(t, [label ' (FAILED)'], cfg);
-        dbg(1,cfg,'ERROR in %s: %s', label, ME.message);
-        disp(getReport(ME,'extended'));
-        error('Aborting due to error in %s.', label);
-    end
-end
-
 function quicklook_field(name, X_km, Y_km, F, mask, cfg)
 % quicklook_field - diagnostic plot for a raster F on the grid
 %   name      : title string
@@ -1966,8 +1735,7 @@ function quicklook_field(name, X_km, Y_km, F, mask, cfg)
         return;
     end
 
-    hf = dbg_fig(['Quicklook: ' name], cfg);
-    ax = nexttile;                 % safe: dbg_fig already made tiledlayout
+    ax = nexttile;                 
 
     imagesc(ax, X_km(1,:), Y_km(:,1), F);
     set(ax,'YDir','normal'); axis(ax,'image');
